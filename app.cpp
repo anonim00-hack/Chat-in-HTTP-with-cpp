@@ -1,0 +1,210 @@
+#include <arpa/inet.h>
+#include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <iostream>
+#include <netinet/in.h>
+#include <string>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <vector>
+
+const std::string ChatFile = "chat_hystory.txt";
+
+void writeToFile(const std::string &msg)
+{
+    std::ofstream outfile(ChatFile, std::ios_base::app);
+    if (outfile.is_open())
+    {
+        outfile << msg << std::endl;
+        outfile.close();
+    }
+}
+
+void readFile(std::vector<std::string> &hystory)
+{
+    hystory.clear();
+    std::ifstream infile(ChatFile);
+    std::string line;
+    while (std::getline(infile, line))
+    {
+        if (!line.empty())
+            hystory.push_back(line);
+    }
+}
+
+// Декодер для русского языка и пробелов
+std::string decodeUTF8(std::string str)
+{
+    std::string res;
+    for (size_t i = 0; i < str.length(); ++i)
+    {
+        if (str[i] == '+')
+            res += ' ';
+        else if (str[i] == '%' && i + 2 < str.length())
+        {
+            int value;
+            sscanf(str.substr(i + 1, 2).c_str(), "%x", &value);
+            res += static_cast<char>(value);
+            i += 2;
+        } else
+            res += str[i];
+    }
+    return res;
+}
+
+int main()
+{
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    int opt = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    sockaddr_in address;
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port = htons(8080);
+
+    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0)
+    {
+        std::cerr << "Ошибка bind: порт занят!" << std::endl;
+        return 1;
+    }
+    listen(server_fd, 5);
+
+    std::cout << "Сервер на http://localhost:8080" << std::endl;
+
+    while (true)
+    {
+        // Принимаем клиента
+        sockaddr_in client_addr;
+        socklen_t client_len = sizeof(client_addr);
+        int client_socket =
+            accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
+        if (client_socket < 0)
+            continue;
+
+        char buffer[4096] = {0};
+        read(client_socket, buffer, 4096);
+        std::string request(buffer);
+
+        // --- ПАРСИМ ПУТЬ ---
+        size_t first_space = request.find(" ");
+        size_t second_space = request.find(" ", first_space + 1);
+        if (first_space == std::string::npos ||
+            second_space == std::string::npos)
+        {
+            close(client_socket);
+            continue;
+        }
+        std::string path =
+            request.substr(first_space + 1, second_space - first_space - 1);
+
+        // Объявляем вектор истории один раз для всего цикла
+        std::vector<std::string> hystory;
+
+        // --- ЛОГИКА API (Только сообщения) ---
+        if (path == "/api/messages")
+        {
+            readFile(hystory);
+            std::string only_logs = "";
+            for (const auto &line : hystory)
+            {
+                only_logs +=
+                    "<div style='background:white; padding:8px 12px; "
+                    "margin-bottom:5px; border-radius:15px; box-shadow: 0 1px "
+                    "2px rgba(0,0,0,0.1); width:fit-content; max-width:80%; "
+                    "word-wrap: break-word;'>" +
+                    line + "</div>";
+            }
+
+            std::string res = "HTTP/1.1 200 OK\r\nContent-Type: text/html; "
+                              "charset=UTF-8\r\n\r\n" +
+                              only_logs;
+            write(client_socket, res.c_str(), res.length());
+            close(client_socket);
+            continue;
+        }
+
+        // --- ЛОГИКА POST (Прием сообщения) ---
+        size_t header_end = request.find("\r\n\r\n");
+        if (request.substr(0, 4) == "POST" && header_end != std::string::npos)
+        {
+            std::string body = request.substr(header_end + 4);
+            if (body.find("text=") == 0)
+            {
+                std::string msg = decodeUTF8(body.substr(5));
+                if (!msg.empty())
+                    writeToFile(msg);
+
+                std::string response =
+                    "HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n";
+                write(client_socket, response.c_str(), response.length());
+                close(client_socket);
+                continue;
+            }
+        }
+
+        // --- ЛОГИКА ГЛАВНОЙ СТРАНИЦЫ (GET /) ---
+        readFile(hystory);
+        std::string chat_logs =
+            "<div id='chat' style='display:flex; flex-direction:column; "
+            "gap:8px; border:1px solid #ddd; padding:15px; border-radius:10px; "
+            "height:400px; overflow-y:auto; background:#f4f7f6;'>";
+        for (const auto &line : hystory)
+        {
+            chat_logs +=
+                "<div style='background:white; padding:8px 12px; "
+                "border-radius:15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); "
+                "width:fit-content; max-width:80%; word-wrap: break-word;'>" +
+                line + "</div>";
+        }
+        chat_logs += "</div>";
+
+        std::
+            string
+                html =
+                    "<html><head><meta charset='UTF-8'><title>C++ Chat</title>"
+                    "<style>body{font-family:sans-serif; display:flex; "
+                    "justify-content:center; background:#e5ddd5; padding:20px;}"
+                    ".container{width:100%; max-width:500px; background:white; "
+                    "padding:20px; border-radius:10px; box-shadow:0 4px 10px "
+                    "rgba(0,0,0,0.1);}"
+                    "input{flex:1; padding:12px; border:1px solid #ddd; "
+                    "border-radius:20px; outline:none;}"
+                    "button{padding:10px 20px; background:#075e54; "
+                    "color:white; border:none; border-radius:20px; "
+                    "cursor:pointer; font-weight:bold;}</style>"
+                    "</head><body><div class='container'><h2>💬 C++ "
+                    "Messenger</h2>" +
+                    chat_logs +
+                    "<form method='POST' style='margin-top:15px; display:flex; "
+                    "gap:10px;'>"
+                    "<input type='text' name='text' placeholder='Напишите...' "
+                    "autocomplete='off' required>"
+                    "<button type='submit'>></button></form></div>"
+                    "<script>"
+                    "var c = document.getElementById('chat'); c.scrollTop = "
+                    "c.scrollHeight;"
+                    "setInterval(function() {"
+                    "  fetch('/api/messages').then(r => r.text()).then(data => "
+                    "{" // ТУТ ИЗМЕНИЛ НА /api/messages
+                    "    var oldChat = document.getElementById('chat');"
+                    "    if (oldChat.innerHTML !== data) {" // Упростил
+                                                            // сравнение
+                    "      oldChat.innerHTML = data; oldChat.scrollTop = "
+                    "oldChat.scrollHeight;"
+                    "    }"
+                    "  });"
+                    "}, 1000);" // Раз в секунду — теперь это не грузит сервер
+                    "</script></body></html>";
+
+        std::string response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; "
+                               "charset=UTF-8\r\nContent-Length: " +
+                               std::to_string(html.length()) + "\r\n\r\n" +
+                               html;
+        write(client_socket, response.c_str(), response.length());
+        close(client_socket);
+    }
+    return 0;
+}
