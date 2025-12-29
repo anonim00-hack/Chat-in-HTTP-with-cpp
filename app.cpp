@@ -53,6 +53,28 @@ class ChatServer
         }
         return res;
     }
+    std::string formatMessage(
+        const std::string &line, const std::string &viewer_ip)
+    {
+        size_t delimiter = line.find(":");
+        if (delimiter == std::string::npos)
+            return "";
+
+        std::string sender_ip = line.substr(0, delimiter);
+        std::string message = line.substr(delimiter + 1);
+
+        bool is_my = (sender_ip == viewer_ip);
+
+        std::string align = is_my ? "align-self: flex-end; background:#dcf8c6;"
+                                  : "align-self: flex-start; background:white;";
+
+        return "<div style='" + align +
+               " padding:8px 12px; margin-bottom:5px; border-radius:15px; "
+               "box-shadow: 0 1px 2px rgba(0,0,0,0.1); width:fit-content; "
+               "max-width:80%; word-wrap: break-word;'>"
+               "<small style='color:gray; font-size:10px; display:block;'>" +
+               sender_ip + "</small>" + message + "</div>";
+    }
     sockaddr_in address;
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -72,7 +94,7 @@ class ChatServer
         if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0)
         {
             std::cerr << "Ошибка bind: порт занят!" << std::endl;
-            exit(1); // Если порт занят, выходим
+            exit(1);
         }
         listen(server_fd, 5);
         std::cout << "Сервер готов на порту 8080" << std::endl;
@@ -84,11 +106,14 @@ class ChatServer
         {
             sockaddr_in client_addr;
             socklen_t client_len = sizeof(client_addr);
+
+            
             int client_socket =
-                accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
+            accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
             if (client_socket < 0)
                 continue;
 
+            std::string client_ip = inet_ntoa(client_addr.sin_addr);
             char buffer[4096] = {0};
             read(client_socket, buffer, 4096);
             std::string request(buffer);
@@ -162,12 +187,7 @@ class ChatServer
                 "height:400px; overflow-y:auto; background:#f4f7f6;'>";
             for (const auto &line : hystory)
             {
-                chat_logs += "<div style='background:white; padding:8px 12px; "
-                             "border-radius:15px; box-shadow: 0 2px 4px "
-                             "rgba(0,0,0,0.1); "
-                             "width:fit-content; max-width:80%; word-wrap: "
-                             "break-word;'>" +
-                             line + "</div>";
+                chat_logs += formatMessage(line, client_ip);
             }
             chat_logs += "</div>";
 
