@@ -14,12 +14,12 @@ class ChatServer
   private:
     const std::string ChatFile = "chat_hystory.txt";
 
-    void writeToFile(const std::string &msg)
+    void writeToFile(const std::string &ip, const std::string &msg)
     {
         std::ofstream outfile(ChatFile, std::ios_base::app);
         if (outfile.is_open())
         {
-            outfile << msg << std::endl;
+            outfile << ip << ":" << msg << std::endl;
             outfile.close();
         }
     }
@@ -107,9 +107,9 @@ class ChatServer
             sockaddr_in client_addr;
             socklen_t client_len = sizeof(client_addr);
 
-            
+
             int client_socket =
-            accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
+                accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
             if (client_socket < 0)
                 continue;
 
@@ -140,14 +140,7 @@ class ChatServer
                 std::string only_logs = "";
                 for (const auto &line : hystory)
                 {
-                    only_logs +=
-                        "<div style='background:white; padding:8px 12px; "
-                        "margin-bottom:5px; border-radius:15px; box-shadow: 0 "
-                        "1px "
-                        "2px rgba(0,0,0,0.1); width:fit-content; "
-                        "max-width:80%; "
-                        "word-wrap: break-word;'>" +
-                        line + "</div>";
+                    only_logs += formatMessage(line, client_ip);
                 }
 
                 std::string res = "HTTP/1.1 200 OK\r\nContent-Type: text/html; "
@@ -168,7 +161,7 @@ class ChatServer
                 {
                     std::string msg = decodeUTF8(body.substr(5));
                     if (!msg.empty())
-                        writeToFile(msg);
+                        writeToFile(client_ip, msg);
 
                     std::string response =
                         "HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n";
